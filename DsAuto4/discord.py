@@ -601,7 +601,7 @@ class CryptoDiscordBot:
 
         #шанс реакции и список емоджи
         reaction_chance = 30
-        sticker_chance = 100
+        sticker_chance = 7
         server_name = channel_config.get("server")  # Получаем название сервера
         emojis = ["👍", "🔥", "💯", "😂", "🤔"]
 
@@ -854,7 +854,7 @@ class CryptoDiscordBot:
     def print_welcome(self):
         """Вывод приветственного сообщения"""
         console.print("\n[bold cyan]╔═══════════════════════════════════════╗[/]")
-        console.print("[bold cyan]║    DISCORD AUTO BOT v0.2     ║[/]")
+        console.print("[bold cyan]║    DISCORD AUTO BOT v0.4     ║[/]")
         console.print("[bold cyan]╚═══════════════════════════════════════╝[/]")
         #console.print(
         #    "\n[bold green]• Аккаунтов загружено:[/] " + str(len(self.accounts))
