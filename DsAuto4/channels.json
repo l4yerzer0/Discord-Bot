@@ -1,0 +1,52 @@
+[
+    {
+        "id": "1235218360204136468",
+        "name": "MiraGeneral",
+        "interval": [
+            205,
+            365
+        ]
+    },
+    {
+        "id": "1243219227817541733",
+        "name": "Talus Stage",
+        "interval": [
+            100,
+            210
+        ]
+    },
+    {
+	"id": "1339995436395528242",
+	"name": "SaharaVisitors",
+	"interval": [
+		260,
+		370
+    ],
+    "server": "Sahara"
+    },
+    {
+	"id": "1209630080603791430",
+	"name": "SaharaGeneral",
+	"interval": [
+		270,
+		324
+	],
+    "server": "Sahara"
+    },
+    {
+	"id": "1300907488694243399",
+	"name": "TalusMainChat",
+	"interval": [
+		750,
+		960
+	]
+    },
+    {
+	"id": "1276031339560308806",
+	"name": "DillNiggers",
+	"interval": [
+		280,
+		412
+	]
+    }
+]
