@@ -653,151 +653,192 @@ class CryptoDiscordBot:
         channel_id = channel_config.get("id")
         interval = channel_config.get("interval", [60, 120])
 
-        #шанс реакции и список емоджи
+        # шанс реакции и список емоджи
         reaction_chance = 30
         sticker_chance = 7  # шанс отправки стикера вместо сообщения
         server_name = channel_config.get("server")  # Получаем название сервера
-        emojis = ["👍", "🔥", "💯", "🤔"]
+        emojis = ["👍", "🔥", "💯", "😂", "🤔"]
+        
+        # Отслеживаем последние сообщения, на которые мы ответили
+        # для предотвращения бесконечных циклов ответов
+        last_replied_messages = set()  # Множество ID сообщений, на которые недавно отвечали
+        max_tracked_messages = 10  # Максимальное количество отслеживаемых сообщений
+        
+        # Словарь для отслеживания наших собственных сообщений
+        own_messages = {}  # формат: {message_id: timestamp}
+        max_own_messages = 20  # Максимальное количество отслеживаемых собственных сообщений
 
         while True:  # бесконечный цикл для работы с каналом
             try:
-                if isinstance(interval, (list, tuple)):
-                    wait_time = random.uniform(interval[0], interval[1])
-                else:
-                    wait_time = interval
-
-                #обычный режим  
-                if self.work_mode == 1:
-                    # Получение истории чата из канала
-                    channel_history = self.fetch_channel_history(
-                        token, channel_id, token_suffix  # proxy,
+                # Получение истории чата из канала
+                channel_history = self.fetch_channel_history(
+                    token, channel_id, token_suffix  # proxy,
+                )
+                if not channel_history:
+                    logger.warning(
+                        f"⚠️ {token_suffix}: Нет сообщений в канале {channel_id}"
                     )
-                    if not channel_history:
-                        logger.warning(
-                            f"⚠️ {token_suffix}: Нет сообщений в канале {channel_id}"
-                        )
-                        time.sleep(wait_time)
-                        continue  # Переход к следующей итерации
+                    time.sleep(10)  # Короткая задержка при пустой истории
+                    continue  # Переход к следующей итерации
 
-                    #  Фильтрация сообщений от ботов и от себя
-                    filtered_history = [
-                        msg
-                        for msg in channel_history
-                        if not msg.get("author", {}).get("bot", False)
-                        and (
-                            self.account_usernames is None
-                            or msg.get("author", {}).get("username") != self.account_usernames
-                        )
-                    ]
-
-                    if not filtered_history:
-                        logger.warning(
-                            f"⚠️ {token_suffix}: Нет сообщений для ответа после фильтрации в канале {channel_id}"
-                        )
-                        time.sleep(wait_time)
-                        continue  # Переход к следующей итерации
-
-                    # Выбор случайного сообщения для ответа (теперь из отфильтрованной истории)
-                    target_message = random.choice(filtered_history)
+                # Проверяем, есть ли ответы на наши сообщения
+                reply_needed = False
+                target_message = None
+                
+                for msg in channel_history:
+                    # Проверка, является ли сообщение ответом на наше
+                    msg_id = msg.get("id")
+                    referenced_message_id = msg.get("referenced_message", {}).get("id")
                     
-                    # Определяет, будет ли отвечать на сообщение с указанием на него
-                    # Здесь работает reply_chance - шанс ответить на конкретное сообщение
-                    reply_id = None
-                    if random.randint(1, 100) <= self.reply_chance:
-                        reply_id = target_message.get("id")
+                    if referenced_message_id in own_messages:
+                        # Кто-то ответил на наше сообщение
+                        msg_author = msg.get("author", {})
+                        
+                        # Проверяем, не бот ли это автор и не мы ли сами
+                        if not msg_author.get("bot", False) and (
+                            self.account_usernames is None or msg_author.get("username") != self.account_usernames
+                        ):
+                            # Проверяем, не отвечали ли мы уже на это сообщение (предотвращение циклов)
+                            if msg_id not in last_replied_messages:
+                                reply_needed = True
+                                target_message = msg
+                                # Добавляем ID в список сообщений, на которые уже ответили
+                                last_replied_messages.add(msg_id)
+                                # Если список слишком большой, удаляем старые элементы
+                                if len(last_replied_messages) > max_tracked_messages:
+                                    last_replied_messages.pop()  # Удаляем случайный элемент
+                                break  # Нашли сообщение для ответа, выходим из цикла
+                
+                # Если нет срочных ответов, работаем в обычном режиме по интервалу
+                if not reply_needed:
+                    if isinstance(interval, (list, tuple)):
+                        wait_time = random.uniform(interval[0], interval[1])
+                    else:
+                        wait_time = interval
                     
-                    # Проверка лимита сообщений
+                    # Обычный режим  
+                    if self.work_mode == 1:
+                        #  Фильтрация сообщений от ботов и от себя
+                        filtered_history = [
+                            msg
+                            for msg in channel_history
+                            if not msg.get("author", {}).get("bot", False)
+                            and (
+                                self.account_usernames is None
+                                or msg.get("author", {}).get("username") != self.account_usernames
+                            )
+                        ]
+
+                        if not filtered_history:
+                            logger.warning(
+                                f"⚠️ {token_suffix}: Нет сообщений для ответа после фильтрации в канале {channel_id}"
+                            )
+                            time.sleep(wait_time)
+                            continue  # Переход к следующей итерации
+
+                        # Выбор случайного сообщения для ответа (теперь из отфильтрованной истории)
+                        target_message = random.choice(filtered_history)
+                    
+                    # Проверка лимита сообщений в любом случае
                     if message_limit > 0 and messages_sent[0] >= message_limit:
                         logger.info(
                             f"✅ {token_suffix}: Все сообщения отправлены ({message_limit}). Завершение работы в канале #{channel_id}."
                         )
-                        break # Завершаем работу в канале
+                        break  # Завершаем работу в канале
                     
-                    # ЗДЕСЬ ОПРЕДЕЛЯЕМ, БУДЕТ СТИКЕР ИЛИ СООБЩЕНИЕ
-                    # Получаем список стикеров для текущего сервера
-                    available_stickers = self.stickers.get(server_name, self.stickers.get("default", []))
-                    
-                    # Определяем, будет отправлен стикер или обычное сообщение
-                    send_sticker = random.randint(1, 100) <= sticker_chance and available_stickers
-                    
-                    if send_sticker:
-                        # Отправляем стикер вместо сообщения
-                        sticker_id = random.choice(available_stickers)
-                        success, response = self.post_discord_sticker(
-                            token, channel_id, sticker_id, reply_id
-                        )
-                        if success:
-                            logger.info(f"✅ {token_suffix}: Стикер {sticker_id} отправлен в канал #{channel_id} (вместо сообщения)")
-                            messages_sent[0] += 1  # Увеличиваем счетчик
-                        else:
-                            if response:
-                                logger.error(
-                                    f"❌ {token_suffix}: Ошибка отправки стикера {sticker_id}: {response.status_code} - {response.text}"
-                                )
+                # Создаем ответ для целевого сообщения
+                # Определяет, будет ли отвечать на сообщение с указанием на него
+                reply_id = None
+                # Если это ответ на чей-то ответ на наше сообщение, всегда используем reply
+                if reply_needed:
+                    reply_id = target_message.get("id")
+                # Иначе используем обычную логику с reply_chance
+                elif random.randint(1, 100) <= self.reply_chance:
+                    reply_id = target_message.get("id")
+                
+                # ЗДЕСЬ ОПРЕДЕЛЯЕМ, БУДЕТ СТИКЕР ИЛИ СООБЩЕНИЕ
+                # Получаем список стикеров для текущего сервера
+                available_stickers = self.stickers.get(server_name, self.stickers.get("default", []))
+                
+                # Определяем, будет отправлен стикер или обычное сообщение
+                send_sticker = random.randint(1, 100) <= sticker_chance and available_stickers
+                
+                if send_sticker:
+                    # Отправляем стикер вместо сообщения
+                    sticker_id = random.choice(available_stickers)
+                    success, response = self.post_discord_sticker(
+                        token, channel_id, sticker_id, reply_id
+                    )
+                    if success:
+                        logger.info(f"✅ {token_suffix}: Стикер {sticker_id} отправлен в канал #{channel_id} (вместо сообщения)")
+                        messages_sent[0] += 1  # Увеличиваем счетчик
                     else:
-                        #фильтрация ответа gpt
-                        raw_response = self.create_ai_reply(filtered_history, target_message)
-                        # Отправляем фильтрованный ответ
-                        reply_content = self.filter_ai_response(raw_response)
-                        
-                        if not reply_content or len(reply_content) > self.max_symbols:
-                            logger.warning(
-                                f"⚠️ {token_suffix}: Сообщение превышает лимит или пустое"
+                        if response:
+                            logger.error(
+                                f"❌ {token_suffix}: Ошибка отправки стикера {sticker_id}: {response.status_code} - {response.text}"
                             )
-                            time.sleep(wait_time)
-                            continue  # Переход к следующей итерации
-                        
-                        success, response, message_id = self.post_discord_message(
-                            token, channel_id, reply_content, reply_id  # proxy,
-                        )
-                        if success:
-                            reply_info = " (ответ)" if reply_id else ""
-                            next_msg_time = time.strftime(
-                                "%H:%M:%S", time.localtime(time.time() + wait_time)
-                            )
-                            logger.info(
-                                f"✅ {token_suffix} -> #{channel_id}{reply_info}: {reply_content} | Следующее сообщение в {next_msg_time}"
-                            )
-                            messages_sent[0] += 1  # Увеличиваем счетчик
-                            #self.delete_discord_message(token, channel_id, message_id) # <-- Раскомментируйте, если нужно удалять сообщение
-                        else:
-                            if response:
-                                logger.error(
-                                    f"❌ {token_suffix}: Ошибка {response.status_code}: {response.text}"
-                                )
+                else:
+                    # Отправляем обычное сообщение
+                    raw_response = self.create_ai_reply(filtered_history if not reply_needed else [target_message], target_message)
                     
-                    # Добавляем реакцию с определенным шансом (независимо от того, отправили мы стикер или сообщение)
-                    if random.randint(1, 100) <= reaction_chance:
-                        emoji = random.choice(emojis)
-                        self.add_reaction(token, channel_id, target_message.get("id"), emoji)
+                    # Фильтруем ответ, чтобы убрать цитаты и оставить только текст от бота
+                    reply_content = self.filter_ai_response(raw_response)
+                    
+                    if not reply_content or len(reply_content) > self.max_symbols:
+                        logger.warning(
+                            f"⚠️ {token_suffix}: Сообщение превышает лимит или пустое"
+                        )
+                        if not reply_needed:
+                            time.sleep(wait_time)
+                        else:
+                            time.sleep(10)  # Короткая задержка при ошибке в срочном ответе
+                        continue  # Переход к следующей итерации
+                    
+                    success, response, message_id = self.post_discord_message(
+                        token, channel_id, reply_content, reply_id  # proxy,
+                    )
+                    if success:
+                        reply_info = " (срочный ответ)" if reply_needed else " (ответ)" if reply_id else ""
+                        next_msg_time = time.strftime(
+                            "%H:%M:%S", time.localtime(time.time() + (wait_time if not reply_needed else 60))
+                        )
+                        logger.info(
+                            f"✅ {token_suffix} -> #{channel_id}{reply_info}: {reply_content} | Следующее сообщение в {next_msg_time}"
+                        )
+                        messages_sent[0] += 1  # Увеличиваем счетчик
+                        
+                        # Сохраняем информацию о нашем сообщении для отслеживания ответов на него
+                        current_time = time.time()
+                        own_messages[message_id] = current_time
+                        
+                        # Удаляем старые сообщения из отслеживания
+                        if len(own_messages) > max_own_messages:
+                            # Находим и удаляем самое старое сообщение
+                            oldest_msg_id = min(own_messages.items(), key=lambda x: x[1])[0]
+                            own_messages.pop(oldest_msg_id)
+                        
+                        #self.delete_discord_message(token, channel_id, message_id) # <-- Раскомментируйте, если нужно удалять сообщение
+                    else:
+                        if response:
+                            logger.error(
+                                f"❌ {token_suffix}: Ошибка {response.status_code}: {response.text}"
+                            )
+                
+                # Добавляем реакцию с определенным шансом (независимо от того, отправили мы стикер или сообщение)
+                if random.randint(1, 100) <= reaction_chance:
+                    emoji = random.choice(emojis)
+                    self.add_reaction(token, channel_id, target_message.get("id"), emoji)
 
-                    # ожидание перед следующей отправкой
+                # ожидание перед следующей отправкой
+                # Если это был срочный ответ, делаем меньшую задержку
+                if reply_needed:
+                    time.sleep(20)  # Ждем немного после срочного ответа
+                else:
                     time.sleep(wait_time)
                 
-                #спам-режим
-                elif self.work_mode == 2 and self.sentences:
-                    if message_limit == 0 or messages_sent[0] < message_limit:
-                        send_delay = random.randint(61, 240)
-                        random_sentence = random.choice(self.sentences)
-                        success, response, message_id = self.post_discord_message(
-                                token, channel_id, random_sentence, None
-                            )
-                        if success:
-                            logger.info(f"✅ Отправлено случайное предложение: {random_sentence}")
-                            messages_sent[0] += 1
-                            self.delete_discord_message(token, channel_id, message_id)  # Немедленно удаляем сообщение
-                        else:
-                            logger.error(f"❌ Ошибка при отправке случайного предложения: {response}")
-                        time.sleep(send_delay)
-                    else: 
-                        logger.info(
-                            f"✅ {token_suffix}: Все сообщения отправлены ({message_limit}). Завершение работы в канале #{channel_id}."
-                        )
-                        break # Завершаем работу в канале     
-
             except Exception as e:
                 logger.error(f"❌ {token_suffix}: Ошибка в канале #{channel_id}: {e}")
-                time.sleep(30)  # Ждем 30 сек при ошибке
+                time.sleep(60)  # Ждем минуту при ошибке
 
     def choose_accounts(self):
         """Выводит список аккаунтов и позволяет пользователю выбрать нужные."""
