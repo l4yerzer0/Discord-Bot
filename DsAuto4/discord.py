@@ -11,6 +11,7 @@ from rich.theme import Theme
 from rich.logging import RichHandler
 from openai import OpenAI
 from difflib import SequenceMatcher
+import re
 
 
 # Настройка консоли
@@ -501,6 +502,59 @@ class CryptoDiscordBot:
             logger.error(f"❌ Ошибка при создании общего ответа AI: {e}")
             return ""
 
+    def filter_ai_response(self, response_text):
+        """
+        Фильтрует ответ AI, оставляя только текст самого ответа (без цитат).
+        
+        Правила фильтрации:
+        1. Если в строке содержатся форматы типа "username: text", она считается цитатой
+        2. Удаляет строки с метками ответа "(ответ):"
+        3. Берется только последний блок содержательного текста (после всех цитат)
+        
+        Args:
+            response_text (str): Полный текст ответа от AI
+            
+        Returns:
+            str: Отфильтрованный текст ответа
+        """
+        
+        # Если текст пустой, возвращаем его как есть
+        if not response_text or not response_text.strip():
+            return response_text
+            
+        # Разделяем текст на строки
+        lines = response_text.split('\n')
+        
+        # Очищаем пустые строки и применяем strip()
+        lines = [line.strip() for line in lines if line.strip()]
+        
+        # Если текст пустой после очистки, возвращаем исходный
+        if not lines:
+            return response_text
+        
+        # Шаблоны для поиска цитат и меток ответов
+        username_pattern = re.compile(r'^[a-zA-Z0-9_-]+\s*:')
+        reply_label_pattern = re.compile(r'^\(ответ\):', re.IGNORECASE)
+        
+        # Находим индекс последней строки, которая похожа на цитату
+        last_citation_index = -1
+        for i, line in enumerate(lines):
+            # Проверяем, является ли строка цитатой или меткой ответа
+            if username_pattern.match(line) or reply_label_pattern.match(line):
+                last_citation_index = i
+        
+        # Берем все строки после последней цитаты
+        result_lines = lines[last_citation_index + 1:] if last_citation_index < len(lines) - 1 else []
+        
+        # Если после фильтрации ничего не осталось, возвращаем исходный текст
+        if not result_lines:
+            return response_text
+        
+        # Соединяем оставшиеся строки
+        result = '\n'.join(result_lines)
+        
+        return result.strip()
+
     def add_reaction(self, token, channel_id, message_id, emoji):
         """Добавляет реакцию на сообщение"""
         url = f"https://discord.com/api/v9/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me"
@@ -601,9 +655,9 @@ class CryptoDiscordBot:
 
         #шанс реакции и список емоджи
         reaction_chance = 30
-        sticker_chance = 7
+        sticker_chance = 7  # шанс отправки стикера вместо сообщения
         server_name = channel_config.get("server")  # Получаем название сервера
-        emojis = ["👍", "🔥", "💯", "😂", "🤔"]
+        emojis = ["👍", "🔥", "💯", "🤔"]
 
         while True:  # бесконечный цикл для работы с каналом
             try:
@@ -645,71 +699,77 @@ class CryptoDiscordBot:
 
                     # Выбор случайного сообщения для ответа (теперь из отфильтрованной истории)
                     target_message = random.choice(filtered_history)
-                    reply_content = self.create_ai_reply(filtered_history, target_message)
-
-                    if not reply_content or len(reply_content) > self.max_symbols:
-                        logger.warning(
-                            f"⚠️ {token_suffix}: Сообщение превышает лимит или пустое"
-                        )
-                        time.sleep(wait_time)
-                        continue  # Переход к следующей итерации
-
+                    
                     # Определяет, будет ли отвечать на сообщение с указанием на него
                     # Здесь работает reply_chance - шанс ответить на конкретное сообщение
                     reply_id = None
                     if random.randint(1, 100) <= self.reply_chance:
                         reply_id = target_message.get("id")
-                    else:
-                        # Отправка сообщения
-                        success = False
-                        response = None
-                        if message_limit == 0 or messages_sent[0] < message_limit:
-                            success, response, message_id = self.post_discord_message(
-                                token, channel_id, reply_content, reply_id  # proxy,
-                            )
-                            if success:
-                                reply_info = " (ответ)" if reply_id else ""
-                                next_msg_time = time.strftime(
-                                    "%H:%M:%S", time.localtime(time.time() + wait_time)
-                                )
-                                logger.info(
-                                    f"✅ {token_suffix} -> #{channel_id}{reply_info}: {reply_content} | Следующее сообщение в {next_msg_time}"
-                                )
-                                messages_sent[0] += 1  # Увеличиваем счетчик
-                                #self.delete_discord_message(token, channel_id, message_id) # <-- Удаляем сообщение
-                        else:
-                            if response:
-                                logger.error(
-                                    f"❌ {token_suffix}: Ошибка {response.status_code}: {response.text}"
-                                )
-                    #вызывает функцию отправки реакции
-                    if random.randint(1, 100) <= reaction_chance:
-                        emoji = random.choice(emojis)
-                        self.add_reaction(token, channel_id, target_message.get("id"), emoji)
-                    # Получаем список стикеров для текущего сервера
-                    available_stickers = self.stickers.get(server_name, self.stickers.get("default", [])) # Теперь используем server_name
-                    if random.randint(1, 100) <= sticker_chance and available_stickers:
-                        sticker_id = random.choice(available_stickers)
-                        success, response = self.post_discord_sticker(
-                            token, channel_id, sticker_id, reply_id
-                        )
-                        if success:
-                            logger.info(f"✅ Стикер {sticker_id} отправлен в канал #{channel_id} (вместо сообщения)")
-                            #with self.messages_sent_lock:
-                            messages_sent[0] += 1  # Увеличиваем счетчик
-                        else:
-                            if response:
-                                logger.error(
-                                    f"❌ Ошибка отправки стикера {sticker_id}: {response.status_code} - {response.text}"
-                                )
-
-
+                    
                     # Проверка лимита сообщений
                     if message_limit > 0 and messages_sent[0] >= message_limit:
                         logger.info(
                             f"✅ {token_suffix}: Все сообщения отправлены ({message_limit}). Завершение работы в канале #{channel_id}."
                         )
                         break # Завершаем работу в канале
+                    
+                    # ЗДЕСЬ ОПРЕДЕЛЯЕМ, БУДЕТ СТИКЕР ИЛИ СООБЩЕНИЕ
+                    # Получаем список стикеров для текущего сервера
+                    available_stickers = self.stickers.get(server_name, self.stickers.get("default", []))
+                    
+                    # Определяем, будет отправлен стикер или обычное сообщение
+                    send_sticker = random.randint(1, 100) <= sticker_chance and available_stickers
+                    
+                    if send_sticker:
+                        # Отправляем стикер вместо сообщения
+                        sticker_id = random.choice(available_stickers)
+                        success, response = self.post_discord_sticker(
+                            token, channel_id, sticker_id, reply_id
+                        )
+                        if success:
+                            logger.info(f"✅ {token_suffix}: Стикер {sticker_id} отправлен в канал #{channel_id} (вместо сообщения)")
+                            messages_sent[0] += 1  # Увеличиваем счетчик
+                        else:
+                            if response:
+                                logger.error(
+                                    f"❌ {token_suffix}: Ошибка отправки стикера {sticker_id}: {response.status_code} - {response.text}"
+                                )
+                    else:
+                        #фильтрация ответа gpt
+                        raw_response = self.create_ai_reply(filtered_history, target_message)
+                        # Отправляем фильтрованный ответ
+                        reply_content = self.filter_ai_response(raw_response)
+                        
+                        if not reply_content or len(reply_content) > self.max_symbols:
+                            logger.warning(
+                                f"⚠️ {token_suffix}: Сообщение превышает лимит или пустое"
+                            )
+                            time.sleep(wait_time)
+                            continue  # Переход к следующей итерации
+                        
+                        success, response, message_id = self.post_discord_message(
+                            token, channel_id, reply_content, reply_id  # proxy,
+                        )
+                        if success:
+                            reply_info = " (ответ)" if reply_id else ""
+                            next_msg_time = time.strftime(
+                                "%H:%M:%S", time.localtime(time.time() + wait_time)
+                            )
+                            logger.info(
+                                f"✅ {token_suffix} -> #{channel_id}{reply_info}: {reply_content} | Следующее сообщение в {next_msg_time}"
+                            )
+                            messages_sent[0] += 1  # Увеличиваем счетчик
+                            #self.delete_discord_message(token, channel_id, message_id) # <-- Раскомментируйте, если нужно удалять сообщение
+                        else:
+                            if response:
+                                logger.error(
+                                    f"❌ {token_suffix}: Ошибка {response.status_code}: {response.text}"
+                                )
+                    
+                    # Добавляем реакцию с определенным шансом (независимо от того, отправили мы стикер или сообщение)
+                    if random.randint(1, 100) <= reaction_chance:
+                        emoji = random.choice(emojis)
+                        self.add_reaction(token, channel_id, target_message.get("id"), emoji)
 
                     # ожидание перед следующей отправкой
                     time.sleep(wait_time)
@@ -737,7 +797,7 @@ class CryptoDiscordBot:
 
             except Exception as e:
                 logger.error(f"❌ {token_suffix}: Ошибка в канале #{channel_id}: {e}")
-                time.sleep(60)  # Ждем минуту при ошибке
+                time.sleep(30)  # Ждем 30 сек при ошибке
 
     def choose_accounts(self):
         """Выводит список аккаунтов и позволяет пользователю выбрать нужные."""
